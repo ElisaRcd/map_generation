@@ -1,0 +1,125 @@
+import pandas
+import plotly.graph_objects as go
+import plotly.offline as offline
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import random
+
+strain_merged_table_v1 = pandas.read_csv("tableau_vff.csv") # imports the table created in sequencing_data_cleaning
+
+df = strain_merged_table_v1
+
+# Add jitter to latitude and longitude to avoid points at the same place 
+jitter_amount = 0.01
+
+df['latitude_jittered'] = df['latitude'] + (2 * random.random() - 1) * jitter_amount
+df['longitude_jittered'] = df['longitude'] + (2 * random.random() - 1) * jitter_amount
+
+# Create custom hover labels with pie chart information
+hover_labels = []
+for _, row in df.iterrows():
+    label = ""
+    label += f"Nombre de souches isolées : {row['strain number']:.2f}<br>"
+    label += f"Nombre de molécules inconnues détectées : {row['Nb_unknown']:.2f}<br>"
+    label += f"Nombre de molécules connues détectées : {row['Nb_known']:.2f}<br>"
+    hover_labels.append(label)
+
+# Create the scatter mapbox trace
+scatter_mapbox_trace = go.Scattermapbox(
+    lat=df['latitude_jittered'],
+    lon=df['longitude_jittered'],
+    hovertext=hover_labels,
+    hoverinfo='text',
+    mode='markers',
+    marker=dict(
+        size=5,
+        color='green',
+        sizemode='diameter',
+        sizeref=5,
+    )
+)
+
+# Create the layout for the scatter mapbox figure
+layout = go.Layout(
+    title="Science à la pelle map - prototype",
+    mapbox=dict(
+        style='carto-positron',
+        zoom=4.5,
+        center=dict(lat=46.227638, lon=2.213749),
+    ),
+)
+
+fig = go.Figure(data=[scatter_mapbox_trace], layout=layout)
+
+fig.update_traces(hoverinfo="none", hovertemplate=None)
+
+app = dash.Dash(__name__)
+
+app.layout = html.Div([
+    dcc.Graph(
+        id="graph",
+        figure=fig,
+        clear_on_unhover=True,
+        style={"width": "800px", "height": "600px"}  # Adjust the width and height as desired
+    ),
+    dcc.Tooltip(id="graph-tooltip"),
+])
+
+@app.callback(
+    Output("graph-tooltip", "show"),
+    Output("graph-tooltip", "bbox"),
+    Output("graph-tooltip", "children"),
+    Input("graph", "hoverData"),
+)
+def display_hover(hoverData):
+    if hoverData is None:
+        return False, dash.no_update, dash.no_update
+
+    pt = hoverData["points"][0]
+    bbox = pt["bbox"]
+    num = pt["pointNumber"]
+    df_row = df.iloc[num]
+    title = "Échantillon n°" + str(df_row['Global ID'])
+    img_src = df_row['search_link'] #add the image retrieved from pubchem with the link generated in sequencing_data_cleaning
+    strain_number = "Nombre de souches isolées : " + str(int(df_row['strain number']))
+    nb_unknown = "Nombre de potentielles nouvelles molécules trouvées : " + str(df_row['Nb_unknown'])
+    nb_known = "Nombre de molécules anciennement connues détectées : " + str(df_row['Nb_known'])
+    mol = str(df_row['compound_name'])
+
+    children = [
+        html.Div(
+            [
+                html.H2(f"{title}", style={"color": "darkblue", "font-size": "16px"}),
+                html.P(f"{strain_number}", style={"font-size": "12px"}),
+                html.P(f"{nb_unknown}", style={"font-size": "12px"}),
+                html.P(f"{nb_known}", style={"font-size": "12px"}),
+            ],
+            style={'width': '200px', 'white-space': 'normal'}
+        )
+    ] #to format the text on the labels
+
+    if len(str(img_src)) > 6: # checks if the string is long enough to be a link and adds an image if there is
+        mol_name = "Un exemple de molécule connue trouvée dans cet échantillon : " + str(df_row['compound_name'])
+        intro_pic = "Structure moléculaire de cette molécule : "
+        children.append(
+            html.Div(
+                [
+                    html.P(f"{mol_name}", style={"font-size": "12px"}),
+                    html.P(f"{intro_pic}", style={"font-size": "12px"}),
+                    html.Img(src=img_src, style={"width": "200px"})
+                ],
+                style={'width': '200px', 'white-space': 'normal'}
+            )
+        )
+
+    return True, bbox, children
+
+
+if __name__ == "__main__":
+
+    # Run the Dash app
+    app.run_server(dev_tools_ui=True)
+
+
+
